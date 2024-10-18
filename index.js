@@ -28,6 +28,11 @@ app.get('/api/users', (req, res) => {
   });
 });
 
+app.get('/', (req, res) => {
+  res.status(200).json('hello bosadi vale kaya dekhane aaya he tu lode ');
+});
+
+
 // Start the server
 const PORT = 3000;
 app.listen(PORT, () => {
