@@ -118,18 +118,22 @@ app.post('/api/verify-otp', (req, res) => {
 const authenticateJWT = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1]; // Get token from headers
 
+  console.log("Received token:", token); // Log the token
+
   if (!token) {
-    return res.status(403).json({ error: 'Access denied, no token provided' });
+      return res.status(403).json({ error: 'Access denied, no token provided' });
   }
 
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-    if (err) {
-      return res.status(403).json({ error: 'Invalid token' });
-    }
-    req.user = user; 
-    next();
+      if (err) {
+          console.error('JWT verification error:', err); // Log the error
+          return res.status(403).json({ error: 'Invalid token' });
+      }
+      req.user = user; 
+      next();
   });
 };
+
 
 // Protected route example (accessible only with valid JWT)
 app.get('/api/protected', authenticateJWT, (req, res) => {
