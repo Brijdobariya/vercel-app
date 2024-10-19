@@ -136,6 +136,41 @@ app.get('/api/protected', authenticateJWT, (req, res) => {
   res.status(200).json({ message: 'This is a protected route', user: req.user });
 });
 
+
+// API route for user login
+app.post('/api/login', (req, res) => {
+  const { email, password } = req.body;
+
+  // Check if user exists in the database
+  const query = 'SELECT * FROM users WHERE email = ? AND password = ?';
+  pool.query(query, [email, password], (err, results) => {
+    if (err) {
+      return res.status(500).json({ error: 'Database error' });
+    }
+
+    if (results.length === 0) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    const user = results[0];
+
+    // Generate a JWT token for the user
+    const token = jwt.sign(
+      { userId: user.id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '1h' }
+    );
+
+    // Send the token to the client
+    return res.json({
+      message: 'Login successful',
+      token: token
+    });
+  });
+});
+
+
+
 // Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
