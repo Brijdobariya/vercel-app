@@ -4,6 +4,7 @@ const mysql = require('mysql2');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const { createTransport } = require('nodemailer');
+const jwt = require('jsonwebtoken'); // Import JWT
 
 const app = express();
 
@@ -80,7 +81,7 @@ app.post('/api/register', (req, res) => {
   });
 });
 
-// API route to verify OTP
+// API route to verify OTP and generate JWT
 app.post('/api/verify-otp', (req, res) => {
   const { email, otp } = req.body;
 
@@ -88,18 +89,53 @@ app.post('/api/verify-otp', (req, res) => {
   if (otpStore[email] && otpStore[email] === otp) {
     delete otpStore[email];  // OTP is used, delete it
 
-    // Insert new user into database
+    // Insert new user into the database
     const { name, password } = req.body;
     const insertUserQuery = 'INSERT INTO users (name, email, password) VALUES (?, ?, ?)';
     pool.query(insertUserQuery, [name, email, password], (err, result) => {
       if (err) {
         return res.status(500).json({ error: err.message });
       }
-      return res.status(201).json({ message: 'User registered successfully', userId: result.insertId });
+
+      // Create JWT token after successful registration
+      const token = jwt.sign(
+        { userId: result.insertId, email: email },
+        process.env.JWT_SECRET,  // Use a secret key for signing JWT
+        { expiresIn: '1h' } // Token expiration time
+      );
+
+      return res.status(201).json({
+        message: 'User registered successfully',
+        userId: result.insertId,
+        token: token // Send the JWT token to the client
+      });
     });
   } else {
     return res.status(400).json({ error: 'Invalid OTP' });
   }
+});
+
+// Middleware to verify JWT
+const authenticateJWT = (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1]; // Get token from headers
+
+  if (!token) {
+    return res.status(403).json({ error: 'Access denied, no token provided' });
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+
+    req.user = user; // Store user data in request
+    next();
+  });
+};
+
+// Protected route example (accessible only with valid JWT)
+app.get('/api/protected', authenticateJWT, (req, res) => {
+  res.status(200).json({ message: 'This is a protected route', user: req.user });
 });
 
 // Start the server
@@ -107,4 +143,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
-  
