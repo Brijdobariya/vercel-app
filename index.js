@@ -117,7 +117,6 @@ app.post('/api/verify-otp', (req, res) => {
 // Middleware to verify JWT
 const authenticateJWT = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1]; // Get token from headers
-
   console.log("Received token:", token); // Log the token
 
   if (!token) {
@@ -133,6 +132,7 @@ const authenticateJWT = (req, res, next) => {
       next();
   });
 };
+
 
 
 // Protected route example (accessible only with valid JWT)
