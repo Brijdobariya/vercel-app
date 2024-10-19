@@ -62,7 +62,7 @@ app.post('/api/register', (req, res) => {
 
     // Send OTP via email
     const mailOptions = {
-      from: "Live Notes WITH YOU  <mr.dobariya8115@gmail.com>",
+      from: "Live Notes WITH YOU <mr.dobariya8115@gmail.com>",
       to: email,
       subject: 'Your One-Time Password (OTP)',
       html: `
@@ -83,26 +83,25 @@ app.post('/api/register', (req, res) => {
 
 // API route to verify OTP and generate JWT
 app.post('/api/verify-otp', (req, res) => {
-  const { email, otp } = req.body;
+  const { email, otp, name, password } = req.body;
 
   // Check if the OTP matches
   if (otpStore[email] && otpStore[email] === otp) {
     delete otpStore[email];  // OTP is used, delete it
 
-    // Insert new user into the database
-    const { name, password } = req.body;
-    const insertUserQuery = 'INSERT INTO users (name, email, password) VALUES (?, ?, ?)';
-    pool.query(insertUserQuery, [name, email, password], (err, result) => {
+    // Create JWT token after successful OTP verification
+    const token = jwt.sign(
+      { email: email },
+      process.env.JWT_SECRET,  // Use a secret key for signing JWT
+      { expiresIn: '1h' } // Token expiration time
+    );
+
+    // Insert new user into the database with JWT token
+    const insertUserQuery = 'INSERT INTO users (name, email, password, token) VALUES (?, ?, ?, ?)';
+    pool.query(insertUserQuery, [name, email, password, token], (err, result) => {
       if (err) {
         return res.status(500).json({ error: err.message });
       }
-
-      // Create JWT token after successful registration
-      const token = jwt.sign(
-        { userId: result.insertId, email: email },
-        process.env.JWT_SECRET,  // Use a secret key for signing JWT
-        { expiresIn: '1h' } // Token expiration time
-      );
 
       return res.status(201).json({
         message: 'User registered successfully',
@@ -127,8 +126,7 @@ const authenticateJWT = (req, res, next) => {
     if (err) {
       return res.status(403).json({ error: 'Invalid token' });
     }
-
-    req.user = user; // Store user data in request
+    req.user = user; 
     next();
   });
 };
