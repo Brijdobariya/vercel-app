@@ -43,7 +43,7 @@ let otpStore = {};
 
 // API route for registration and OTP sending
 app.post('/api/register', (req, res) => {
-  const { name, email, password } = req.body;
+  const { name, email, password, mobile } = req.body; // Add mobile
 
   // Check if the email already exists
   const checkEmailQuery = 'SELECT * FROM users WHERE email = ?';
@@ -83,7 +83,7 @@ app.post('/api/register', (req, res) => {
 
 // API route to verify OTP and generate JWT
 app.post('/api/verify-otp', (req, res) => {
-  const { email, otp, name, password } = req.body;
+  const { email, otp, name, password, mobile } = req.body; // Add mobile
 
   // Check if the OTP matches
   if (otpStore[email] && otpStore[email] === otp) {
@@ -97,8 +97,8 @@ app.post('/api/verify-otp', (req, res) => {
     );
 
     // Insert new user into the database with JWT token
-    const insertUserQuery = 'INSERT INTO users (name, email, password, token) VALUES (?, ?, ?, ?)';
-    pool.query(insertUserQuery, [name, email, password, token], (err, result) => {
+    const insertUserQuery = 'INSERT INTO users (name, email, password, mobile, token) VALUES (?, ?, ?, ?, ?)';
+    pool.query(insertUserQuery, [name, email, password, mobile, token], (err, result) => {
       if (err) {
         return res.status(500).json({ error: err.message });
       }
@@ -133,13 +133,10 @@ const authenticateJWT = (req, res, next) => {
   });
 };
 
-
-
 // Protected route example (accessible only with valid JWT)
 app.get('/api/protected', authenticateJWT, (req, res) => {
   res.status(200).json({ message: 'This is a protected route', user: req.user });
 });
-
 
 // API route for user login
 app.post('/api/login', (req, res) => {
@@ -172,8 +169,6 @@ app.post('/api/login', (req, res) => {
     });
   });
 });
-
-
 
 // Start the server
 const PORT = process.env.PORT || 3000;
