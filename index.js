@@ -4,15 +4,17 @@ const mysql = require('mysql2');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const { createTransport } = require('nodemailer');
-const jwt = require('jsonwebtoken'); // Import JWT
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt'); // Add bcrypt for password hashing
 
 const app = express();
 
+// Middleware
 app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Set up MySQL connection pool using environment variables
+// MySQL connection pool
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
@@ -23,7 +25,7 @@ const pool = mysql.createPool({
   queueLimit: 0
 });
 
-// Create Nodemailer transporter
+// Nodemailer setup
 const transporter = createTransport({
   host: 'smtp.gmail.com',
   port: 465,
@@ -33,145 +35,122 @@ const transporter = createTransport({
   },
 });
 
-// Function to generate a random 6-digit OTP
-const generateOTP = () => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-};
+// OTP expiration time (5 minutes)
+const OTP_EXPIRATION_TIME = 5 * 60 * 1000;
 
-// Store OTP temporarily (in-memory for demo, but consider using a database)
+// Function to generate a random 6-digit OTP
+const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
+
+// In-memory store for OTPs with expiry
 let otpStore = {};
 
-// API route for registration and OTP sending
+// Register API - Generate OTP and send via email
 app.post('/api/register', (req, res) => {
-  const { name, email, password, mobile } = req.body; // Add mobile
+  const { name, email, password, mobile } = req.body;
 
   // Check if the email already exists
   const checkEmailQuery = 'SELECT * FROM users WHERE email = ?';
-  pool.query(checkEmailQuery, [email], (err, result) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
+  pool.query(checkEmailQuery, [email], async (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
 
-    if (result.length > 0) {
-      return res.status(400).json({ error: 'Email is already registered' });
-    }
+    if (result.length > 0) return res.status(400).json({ error: 'Email is already registered' });
 
     // Generate OTP
     const otp = generateOTP();
-    otpStore[email] = otp;  // Store OTP in-memory for now
+    otpStore[email] = { otp, expiresAt: Date.now() + OTP_EXPIRATION_TIME };
 
     // Send OTP via email
     const mailOptions = {
       from: "Live Notes WITH YOU <mr.dobariya8115@gmail.com>",
       to: email,
       subject: 'Your One-Time Password (OTP)',
-      html: `
-      <h1>Your OTP is: ${otp}</h1>
-      <p>Please use this OTP to verify your email address.</p>
-      `,
+      html: `<h1>Your OTP is: ${otp}</h1><p>Please use this OTP to verify your email address.</p>`,
     };
 
-    transporter.sendMail(mailOptions, function (error, info) {
-      if (error) {
-        return res.status(500).json({ error: 'Failed to send OTP' });
-      } else {
-        return res.status(200).json({ message: 'OTP sent successfully', otp }); // Include OTP for testing (remove in production)
-      }
+    transporter.sendMail(mailOptions, (error, info) => {
+      if (error) return res.status(500).json({ error: 'Failed to send OTP' });
+
+      res.status(200).json({ message: 'OTP sent successfully' });
     });
   });
 });
 
-// API route to verify OTP and generate JWT
+// Verify OTP and complete registration
 app.post('/api/verify-otp', (req, res) => {
-  const { email, otp, name, password, mobile } = req.body; // Add mobile
+  const { email, otp, name, password, mobile } = req.body;
 
-  // Check if the OTP matches
-  if (otpStore[email] && otpStore[email] === otp) {
-    delete otpStore[email];  // OTP is used, delete it
+  const storedOtpData = otpStore[email];
 
-    // Create JWT token after successful OTP verification
-    const token = jwt.sign(
-      { email: email },
-      process.env.JWT_SECRET,  // Use a secret key for signing JWT
-      { expiresIn: '1h' } // Token expiration time
-    );
+  // Check if OTP exists and is valid
+  if (!storedOtpData || storedOtpData.otp !== otp || Date.now() > storedOtpData.expiresAt) {
+    return res.status(400).json({ error: 'Invalid or expired OTP' });
+  }
 
-    // Insert new user into the database with JWT token
+  // Remove OTP after use
+  delete otpStore[email];
+
+  // Hash the password before saving
+  bcrypt.hash(password, 10, (err, hashedPassword) => {
+    if (err) return res.status(500).json({ error: 'Failed to hash password' });
+
+    // Generate JWT token
+    const token = jwt.sign({ email }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+    // Insert user into the database
     const insertUserQuery = 'INSERT INTO users (name, email, password, mobile, token) VALUES (?, ?, ?, ?, ?)';
-    pool.query(insertUserQuery, [name, email, password, mobile, token], (err, result) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
+    pool.query(insertUserQuery, [name, email, hashedPassword, mobile, token], (err, result) => {
+      if (err) return res.status(500).json({ error: err.message });
 
-      return res.status(201).json({
+      res.status(201).json({
         message: 'User registered successfully',
         userId: result.insertId,
-        token: token // Send the JWT token to the client
+        token, // Send the JWT token
       });
     });
-  } else {
-    return res.status(400).json({ error: 'Invalid OTP' });
-  }
+  });
 });
 
-// Middleware to verify JWT
-const authenticateJWT = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1]; // Get token from headers
-  console.log("Received token:", token); // Log the token
+// Login API
+app.post('/api/login', (req, res) => {
+  const { email, password } = req.body;
 
-  if (!token) {
-      return res.status(403).json({ error: 'Access denied, no token provided' });
-  }
+  const query = 'SELECT * FROM users WHERE email = ?';
+  pool.query(query, [email], (err, results) => {
+    if (err) return res.status(500).json({ error: 'Database error' });
+    if (results.length === 0) return res.status(401).json({ error: 'Invalid email or password' });
+
+    const user = results[0];
+
+    // Compare hashed passwords
+    bcrypt.compare(password, user.password, (err, isMatch) => {
+      if (err || !isMatch) return res.status(401).json({ error: 'Invalid email or password' });
+
+      const token = jwt.sign({ userId: user.id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+      res.json({ message: 'Login successful', token });
+    });
+  });
+});
+
+// JWT Authentication Middleware
+const authenticateJWT = (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return res.status(403).json({ error: 'No token provided' });
 
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-      if (err) {
-          console.error('JWT verification error:', err); // Log the error
-          return res.status(403).json({ error: 'Invalid token' });
-      }
-      req.user = user; 
-      next();
+    if (err) return res.status(403).json({ error: 'Invalid token' });
+    req.user = user;
+    next();
   });
 };
 
-// Protected route example (accessible only with valid JWT)
+// Example of a protected route
 app.get('/api/protected', authenticateJWT, (req, res) => {
   res.status(200).json({ message: 'This is a protected route', user: req.user });
 });
 
-// API route for user login
-app.post('/api/login', (req, res) => {
-  const { email, password } = req.body;
-
-  // Check if user exists in the database
-  const query = 'SELECT * FROM users WHERE email = ? AND password = ?';
-  pool.query(query, [email, password], (err, results) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database error' });
-    }
-
-    if (results.length === 0) {
-      return res.status(401).json({ error: 'Invalid email or password' });
-    }
-
-    const user = results[0];
-
-    // Generate a JWT token for the user
-    const token = jwt.sign(
-      { userId: user.id, email: user.email },
-      process.env.JWT_SECRET,
-      { expiresIn: '1h' }
-    );
-
-    // Send the token to the client
-    return res.json({
-      message: 'Login successful',
-      token: token
-    });
-  });
-});
-
-// Start the server
+// Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
